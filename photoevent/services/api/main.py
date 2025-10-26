@@ -47,6 +47,14 @@ class EventCreate(BaseModel):
     date: datetime
     location: Optional[str] = None
     description: Optional[str] = None
+    status: Optional[str] = "active"
+
+class EventUpdate(BaseModel):
+    name: Optional[str] = None
+    date: Optional[datetime] = None
+    location: Optional[str] = None
+    description: Optional[str] = None
+    status: Optional[str] = None
 
 class EventResponse(BaseModel):
     id: int
@@ -96,7 +104,8 @@ async def create_event(event: EventCreate, db: AsyncSession = Depends(get_db)):
         slug=slug,
         date=event.date,
         location=event.location,
-        description=event.description
+        description=event.description,
+        status=event.status
     )
     
     db.add(db_event)
@@ -150,6 +159,62 @@ async def get_event_by_slug(slug: str, db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Event not found")
     
     return event
+
+@app.put("/api/events/{event_id}", response_model=EventResponse)
+async def update_event(
+    event_id: int,
+    event_update: EventUpdate,
+    db: AsyncSession = Depends(get_db)
+):
+    """Update event"""
+    from sqlalchemy import select
+    
+    # Get existing event
+    result = await db.execute(select(Event).where(Event.id == event_id))
+    db_event = result.scalar_one_or_none()
+    
+    if not db_event:
+        raise HTTPException(status_code=404, detail="Event not found")
+    
+    # Update fields
+    update_data = event_update.dict(exclude_unset=True)
+    
+    for field, value in update_data.items():
+        if field == "name" and value:
+            # Regenerate slug if name changes
+            slug = value.lower().replace(" ", "-")
+            # Check if slug exists (excluding current event)
+            slug_check = await db.execute(
+                select(Event).where(Event.slug == slug, Event.id != event_id)
+            )
+            if slug_check.scalar_one_or_none():
+                slug = f"{slug}-{int(datetime.utcnow().timestamp())}"
+            setattr(db_event, "slug", slug)
+        
+        setattr(db_event, field, value)
+    
+    await db.commit()
+    await db.refresh(db_event)
+    
+    return db_event
+
+@app.delete("/api/events/{event_id}")
+async def delete_event(event_id: int, db: AsyncSession = Depends(get_db)):
+    """Delete event"""
+    from sqlalchemy import select
+    
+    # Get event
+    result = await db.execute(select(Event).where(Event.id == event_id))
+    event = result.scalar_one_or_none()
+    
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
+    
+    # TODO: Also delete associated photos and data
+    await db.delete(event)
+    await db.commit()
+    
+    return {"message": "Event deleted successfully", "id": event_id}
 
 @app.post("/api/events/{event_id}/photos")
 async def upload_photos(
@@ -250,6 +315,26 @@ async def list_event_photos(
     photos = result.scalars().all()
     
     return photos
+
+@app.delete("/api/photos/{photo_id}")
+async def delete_photo(photo_id: int, db: AsyncSession = Depends(get_db)):
+    """Delete a photo"""
+    from sqlalchemy import select
+    
+    # Get photo
+    result = await db.execute(select(Photo).where(Photo.id == photo_id))
+    photo = result.scalar_one_or_none()
+    
+    if not photo:
+        raise HTTPException(status_code=404, detail="Photo not found")
+    
+    # TODO: Also delete from MinIO storage
+    # TODO: Delete from Redis cache
+    
+    await db.delete(photo)
+    await db.commit()
+    
+    return {"message": "Photo deleted successfully", "id": photo_id}
 
 @app.post("/api/search-face")
 async def search_face(
