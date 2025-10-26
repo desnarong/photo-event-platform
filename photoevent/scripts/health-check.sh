@@ -36,7 +36,7 @@ check_service "prometheus"
 echo ""
 echo "🌐 Checking API endpoints..."
 
-API_URL="${1:-https://api.yourdomain.com}"
+API_URL="${1:-https://api.thepixstock.com}"
 
 # Check API health
 if curl -s -o /dev/null -w "%{http_code}" "$API_URL/health" | grep -q "200"; then
